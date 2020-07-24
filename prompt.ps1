@@ -1,80 +1,291 @@
-$global:forePromptColor = 0
-$global:leftArrow = [char]0xe0b2
-$global:rightArrow = [char]0xe0b0
-$global:esc = "$([char]27)"
-$global:fore = "$esc[38;5"
-$global:back = "$esc[48;5"
-$global:prompt = ''
+enum ANSIColor {
+    Black
+    Red
+    Green
+    Yellow
+    Blue
+    Magenta
+    Cyan
+    White
+    BrightBlack	
+    BrightRed
+    BrightGreen
+    BrightYellow
+    BrightBlue
+    BrightMagenta
+    BrightCyan
+    BrightWhite
+}
 
+$global:PromptConfig = @{
+    ResetColors     = "`f0m"
+
+    ForegroundColor = $( [System.Console]::ForegroundColor + 30)
+    BackgroundColor = $( [System.Console]::BackgroundColor + 40)
+    
+    LeftArrow       = [char]0x25C4
+    RightArrow      = [char]0x25BA
+    History         = @{
+        Enabled         = $true;
+        ForegroundColor = [ANSIColor]::White.value__
+        BackgroundColor = [AnsiColor]::Yellow.value__
+    }
+
+    PSDrive          = @{
+        Enabled         = $true;
+        ForegroundColor = [ANSIColor]::White.value__
+        BackgroundColor = [ANSIColor]::Magenta.value__
+    }
+    PushD           = @{
+        Enabled         = $true;
+        ForegroundColor = [ANSIColor]::White.value__
+        BackgroundColor = [ANSIColor]::BrightBlack.value__
+    }
+    PWD          = @{
+        Enabled         = $true;
+        ShowLeaf        = $false;
+        ForegroundColor = [ANSIColor]::White.value__
+        BackgroundColor = [ANSIColor]::Green.value__
+    }
+    GIT          = @{
+        Enabled         = $true;
+
+        ForegroundColor = [ANSIColor]::White.value__
+        BackgroundColor = [ANSIColor]::Magenta.value__
+
+        BranchDefaultBackgroundColor = [AnsiColor]::Magenta.value__
+        BranchDefaultForegroundColor = [AnsiColor]::White.value__
+        BranchWarningBackgroundColor = [AnsiColor]::Yellow.value__
+        BranchWarningForegroundColor = [AnsiColor]::Yellow.value__
+
+        
+    }
+    ExecutionTime   = @{
+        Enabled = $true;
+        ForegroundColor = [ANSIColor]::White.value__
+        BackgroundColor = [AnsiColor]::BrightBlue.value__
+        DefaultForegroundColor = [ANSIColor]::White.value__
+        DefaultBackgroundColor = [AnsiColor]::BrightBlue.value__
+        ErrorForegroundColor      = [ANSIColor]::White.value__
+        ErrorBackgroundColor      = [ANSIColor]::BrightRed.value__
+    }
+
+    DateTime         = @{
+        Enabled = $true;
+        ForegroundColor = [ANSIColor]::White.value__
+        BackgroundColor = [AnsiColor]::BrightGreen.value__
+    }
+
+    DrawArrow       = {
+        param(
+
+            [string] $Source,
+
+            [string] $Destination,
+            [Parameter(Mandatory)]
+            [ValidateSet("LeftArrow", "RightArrow", "None")]
+            [string] $Arrow,
+            [switch] $Reset
+        )
+        $this = $global:PromptConfig
+
+        if ($this.ContainsKey($Arrow))
+        {
+            if ($Arrow -eq "RightArrow")
+            {
+                # Left Side
+                $ForegroundColor = if ($null -ne $this.DrawArrowLast) { $this[ $this.DrawArrowLast].BackgroundColor }
+                $BackgroundColor = if (-not [String]::IsNullOrEmpty($Destination)) { $this[ $Destination].BackgroundColor }
+            }
+            if ($Arrow -eq "LeftArrow")
+            {
+                # Right Side
+                $ForegroundColor = if (-not [String]::IsNullOrEmpty($Destination)) { $this[ $Destination].BackgroundColor }
+                $BackgroundColor = if ($null -ne $this.DrawArrowLast) { $this[ $this.DrawArrowLast].BackgroundColor }
+            }
+            # Draw the Arrows
+            . {
+                "`f0m"
+                if (![string]::IsNullOrEmpty($BackgroundColor))
+                {
+                    "`f48;5;{0}m" -f $BackgroundColor
+                }
+                if ($ForegroundColor) {
+                    "`f38;5;{0}m" -f $ForegroundColor
+                }
+                $this[$Arrow]
+            }
+            $Result
+        }
+
+        # Sets Base Foreground and Background Color. So you dont have to.
+        "`f0m`f48;5;{0}m`f38;5;{1}m" -f $this[ $Destination ].BackgroundColor, $this[ $Destination ].ForegroundColor
+
+        if ($Reset)
+        {
+            $this.DrawArrowLast = $null;
+        }
+        else {
+            $this.DrawArrowLast = $Destination
+        }
+    }
+    DrawArrowLast   = $null
+}
 
 [System.Collections.Generic.List[ScriptBlock]]$global:PromptRight = @(
     # right aligned
-    { "$fore;${errorColor}m{0}" -f $leftArrow }
-    { "$fore;${forePromptColor}m$back;${errorColor}m{0}" -f $(if (@(get-history).Count -gt 0) {(get-history)[-1] | % { "{0:c}" -f (new-timespan $_.StartExecutionTime $_.EndExecutionTime)}}else {'00:00:00.0000000'}) }
-    
-    { "$fore;7m$back;${errorColor}m{0}" -f $leftArrow }
-    { "$fore;0m$back;7m{0}" -f $(get-date -format "hh:mm:ss tt") }
+    # ExecutionTime
+    {
+        $this = $global:PromptConfig["ExecutionTime"]
+        if ($true -eq $this.Enabled)
+        {
+            # Color should change if an error was thrown
+            if ($global:PromptConfig.HasError) {
+                $this.ForegroundColor = $this.DefaultForegroundColor
+                $this.BackgroundColor = $this.DefaultBackgroundColor
+            }
+            else
+            {
+                $this.ForegroundColor = $this.ErrorForegroundColor
+                $this.BackgroundColor = $this.ErrorBackgroundColor
+            }
+
+            . $global:PromptConfig.DrawArrow -Arrow LeftArrow -Destination "ExecutionTime"
+            #"{0:d4}" -f $MyInvocation.HistoryID
+            "{0}" -f $(
+                if (@(get-history).Count -gt 0) {
+                    (get-history)[-1] | 
+                        ForEach-Object {
+                            "{0:c}" -f (new-timespan $_.StartExecutionTime $_.EndExecutionTime)
+                        }
+                }
+                else
+                {
+                    '00:00:00.0000000'
+
+                }
+            )
+        }
+    }
+    # DateTime
+    {
+        $this = $global:PromptConfig["DateTime"]
+        if ($true -eq $this.Enabled)
+        {
+            . $global:PromptConfig.DrawArrow -Arrow LeftArrow -Destination "DateTime"
+            $(Get-Date -Format "hh:mm:ss tt")
+        }
+    }
 )
 
 [System.Collections.Generic.List[ScriptBlock]]$global:PromptLeft = @(
-    # left aligned
-    { "$fore;${forePromptColor}m$back;${global:platformColor}m{0}" -f $('{0:d4}' -f $MyInvocation.HistoryId) }
-    { "$back;22m$fore;${global:platformColor}m{0}" -f $rightArrow }
-    
-    { "$back;22m$fore;${forePromptColor}m{0}" -f $(if ($pushd = (Get-Location -Stack).count) { "$([char]187)" + $pushd }) }
-    { "$fore;22m$back;5m{0}" -f $rightArrow }
-    
-    { "$back;5m$fore;${forePromptColor}m{0}" -f $($pwd.Drive.Name) }
-    { "$back;14m$fore;5m{0}" -f $rightArrow }
-    
-    { "$back;14m$fore;${forePromptColor}m{0}$esc[0m" -f $(Split-Path $pwd -leaf) }
-)
-function global:prompt {
-    $global:errorColor = if ($?) {22} else {1}
-    $global:platformColor = if ($isWindows) {11} else {117}
-        
-    $gitTest = $(git config -l) -match 'branch\.'
-    if (-not [string]::IsNullOrEmpty($gitTest)) {
-        $branch = git symbolic-ref --short -q HEAD
-        $aheadbehind = git status -sb
-        $distance = ''
-    
-        if (-not [string]::IsNullOrEmpty($(git diff --staged))) { $branchbg = 3 }
-        else { $branchbg = 5 }
-    
-        if (-not [string]::IsNullOrEmpty($(git status -s))) { $arrowfg = 3 }
-        else { $arrowfg = 5 }
-    
-        if ($aheadbehind -match '\[\w+.*\w+\]$') {
-            $ahead = [regex]::matches($aheadbehind, '(?<=ahead\s)\d+').value
-            $behind = [regex]::matches($aheadbehind, '(?<=behind\s)\d+').value
-    
-            $distance = "$back;15m$fore;${arrowfg}m{0}$esc[0m" -f $rightArrow
-            if ($ahead) {$distance += "$back;15m$fore;${forePromptColor}m{0}$esc[0m" -f "a$ahead"}
-            if ($behind) {$distance += "$back;15m$fore;${forePromptColor}m{0}$esc[0m" -f "b$behind"}
-            $distance += "$fore;15m{0}$esc[0m" -f $rightArrow
+    # History
+    { 
+        $this = $global:PromptConfig["History"]
+        if ($true -eq $this.Enabled)
+        {
+            . $global:PromptConfig.DrawArrow -Arrow None -Destination "History"
+            "{0:d4}" -f $MyInvocation.HistoryID
         }
-        else {
-            $distance = "$fore;${arrowfg}m{0}$esc[0m" -f $rightArrow
-        }
-    
-        [System.Collections.Generic.List[ScriptBlock]]$gitPrompt = @(
-            { "$back;${branchbg}m$fore;14m{0}$esc[0m" -f $rightArrow }
-            { "$back;${branchbg}m$fore;${forePromptColor}m{0}$esc[0m" -f $branch }
-            { "{0}$esc[0m" -f $distance }
-        )
-        $leftSide = -join @($global:PromptLeft + $gitPrompt + {" "}).Invoke()
     }
-    else {
-        $leftSide = -join @($global:PromptLeft + { "$fore;14m{0}$esc[0m" -f $rightArrow } + {" "}).Invoke()
-    }
-    
-    $rightSide = -join ($global:promptRight).Invoke()
-    $offset = $global:host.UI.RawUI.BufferSize.Width - 28
-    $prompt = -join @($leftSide, "$esc[${offset}G", $rightSide, "$esc[0m" + "`n`r`> ")
-    $prompt
-}
 
+    {
+        $this = $global:PromptConfig["PushD"]
+        if ($true -eq $this.Enabled)
+        {
+            . $global:PromptConfig.DrawArrow -Arrow RightArrow -Destination "PushD"
+            if ($pushd = (Get-Location -Stack).count) { "$([char]187)" + $pushd }
+            else {
+                " 0 "
+            }
+        }
+    }
+
+    # PSDrive
+    {
+        $this = $global:PromptConfig["PSDrive"]
+        if ($true -eq $this.Enabled)
+        {
+            . $global:PromptConfig.DrawArrow -Arrow LeftArrow -Destination "PSDrive"
+            " "
+            $pwd.Drive.Name
+            ":"
+        }
+
+    }
+
+    # PWD
+    {
+        $this = $global:PromptConfig["PWD"]
+        if ($true -eq $this.Enabled)
+        {
+            . $global:PromptConfig.DrawArrow -Arrow RightArrow -Destination "PWD"
+
+            if ($this.ShowLeaf) {
+                Split-Path $pwd -leaf
+            }
+            else {
+                $pwd.path.Replace($pwd.Drive.Root, "")
+            }
+        }
+    }
+    
+    # GIT
+    {
+        $this = $global:PromptConfig["GIT"]
+        if ($true -eq $this.Enabled)
+        {
+            $branch = git symbolic-ref --short -q HEAD
+            $aheadbehind = git status -sb
+            $distance = ''
+
+            # Set Color based off of Alert.
+            $this.BackgroundColor = $this.BranchDefaultBackgroundColor
+            $this.ForegroundColor = $this.BranchDefaultForegroundColor
+            if (-not [string]::IsNullOrEmpty($(git diff --staged))) {
+                $this.BackgroundColor = $this.BranchWarningBackgroundColor
+                $this.ForegroundColor = $this.BranchWarningForegroundColor
+            }
+
+            . $global:PromptConfig.DrawArrow -Arrow RightArrow -Destination "GIT"
+            $branch
+
+            if ($aheadbehind -match '\[\w+.*\w+\]$')
+            {
+                $ahead = [regex]::matches($aheadbehind, '(?<=ahead\s)\d+').value
+                $behind = [regex]::matches($aheadbehind, '(?<=behind\s)\d+').value
+
+                $distance = ""
+                if ($ahead) { $distance += "a$ahead" }
+                if ($behind) { $distance += "b$behind" }
+
+                . $global:PromptConfig.DrawArrow -Arrow "None" -Destination "GIT"
+                Write-Host $distance
+            }
+
+            . $global:PromptConfig.DrawArrow -Arrow RightArrow -Reset
+        }
+    }
+)
+
+function global:prompt {
+    $global:PromptConfig.HasError = $?
+	$gitTest = $(git config -l) -match 'branch\.'
+    if (-not [string]::IsNullOrEmpty($gitTest))
+    {
+        $leftSide = -join @($global:PromptLeft + {" "}).Invoke()
+    }
+    else
+    {
+        return "PS $($executionContext.SessionState.Path.CurrentLocation)$('>' * ($nestedPromptLevel + 1)) ";
+    }
+
+    $rightSide = -join ($global:PromptRight).Invoke()
+    $offset = $global:host.UI.RawUI.BufferSize.Width - 28
+
+    $prompt = -join @($leftSide, "`f${offset}G", $rightSide, "`f0m" + "`n`r`> ")
+    $prompt -Replace "`f", "$([char]27)["
+}
 
 # Set this alias every time PowerShell launches so I stop mistyping code-insiders
 Set-Alias code code-insiders
